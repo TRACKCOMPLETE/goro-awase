@@ -2,7 +2,6 @@
 # pip install jaconv mecab-python3 unidic-lite
 # pip install transformers fugashi ipadic torch
 
-# それぞれの単語の読みの一文字目を取り出す
 import jaconv
 import MeCab
 import unidic_lite
