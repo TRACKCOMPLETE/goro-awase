@@ -42,21 +42,11 @@ def generate_permutations(hira_list: list[str]) -> list[str]:
     perms = set(''.join(p) for p in permutations(hira_list))
     return sorted(perms)
 
-def is_valid_inflection(parsed: list[str]) -> bool:
-    for line in parsed:
-        if line == "EOS" or not line.strip():
-            continue
-        cols = line.split("\t")
-        if len(cols) < 7:
-            continue
-        pos_detail = cols[4]
-        conj_form = cols[6]
-        if pos_detail.startswith("動詞") and conj_form.startswith("未然形"):
-            return False
-    return True
-
-def is_valid_adverb_placement(parsed: list[str]) -> bool:
-    morphemes = []
+def contains_interjection_or_adverb(parsed: list[str]) -> bool:
+    """
+    感動詞（間投詞）または副詞が含まれているかチェック。
+    含まれていたらTrue（アウト）
+    """
     for line in parsed:
         if line == "EOS" or not line.strip():
             continue
@@ -64,46 +54,18 @@ def is_valid_adverb_placement(parsed: list[str]) -> bool:
         if len(cols) < 5:
             continue
         pos = cols[4].split("-")[0]
-        morphemes.append(pos)
-    if not morphemes:
-        return True  # 空なら問題なし
-    return morphemes[-1] != "副詞"
+        if pos in {"感動詞", "副詞"}:
+            return True
+    return False
 
-def is_no_lone_interjection(parsed: list[str]) -> bool:
-    has_interjection = False
-    token_count = 0
-    for line in parsed:
-        if line == "EOS" or not line.strip():
-            continue
-        cols = line.split("\t")
-        if len(cols) < 5:
-            continue
-        pos = cols[4].split("-")[0]
-        if pos == "感動詞":
-            has_interjection = True
-        token_count += 1
-    return not (has_interjection and token_count == 1)
 
-def is_valid_particle_position(parsed: list[str]) -> bool:
-    prev_pos = None
-    for line in parsed:
-        if line == "EOS" or not line.strip():
-            continue
-        if "\t" not in line:
-            continue
-
-        surface, features = line.split("\t", 1)
-        pos = features.split(",")[0]
-
-        if pos == "助詞":
-            if prev_pos in [None, "助詞"]:  # 文頭 or 助詞連続
-                return False
-        prev_pos = pos
-
-    return True
-
-def is_valid_particle_semantics(parsed: list[str]) -> bool:
+def check_positions(parsed: list[str]) -> bool:
+    """
+    助詞・接続詞の位置、孤立感動詞、文末副詞などを一括チェック
+    """
+    pos_list = []
     tokens = []
+
     for line in parsed:
         if line == "EOS" or not line.strip():
             continue
@@ -112,80 +74,137 @@ def is_valid_particle_semantics(parsed: list[str]) -> bool:
             continue
         surface = cols[0]
         pos = cols[4].split("-")[0]
+        pos_list.append(pos)
         tokens.append((surface, pos))
 
-    for i, (word, pos) in enumerate(tokens):
-        if pos != "助詞":
-            continue
+    # 助詞の位置チェック（文頭・連続禁止）
+    prev_pos = None
+    for pos in pos_list:
+        if pos == "助詞":
+            if prev_pos is None or prev_pos == "助詞":
+                return False
+        prev_pos = pos
 
-        if i == 0 or i == len(tokens) - 1:
-            return False  # 助詞が文頭/文末は不自然
+    # 接続詞の位置チェック（文頭・文末・連続禁止）
+    for i, pos in enumerate(pos_list):
+        if pos == "接続詞":
+            if i == 0 or i == len(pos_list) - 1:
+                return False
+            if pos_list[i - 1] == "接続詞" or pos_list[i + 1] == "接続詞":
+                return False
 
-        prev_word, prev_pos = tokens[i - 1]
-        next_word, next_pos = tokens[i + 1]
+    # 文末が副詞はNG
+    if pos_list and pos_list[-1] == "副詞":
+        return False
 
-        if word == "が":
-            if prev_pos != "名詞" or next_pos not in {"動詞", "形容詞", "名詞"}:
-                return False
-        elif word == "を":
-            if prev_pos != "名詞" or next_pos != "動詞":
-                return False
-        elif word == "に":
-            if prev_pos != "名詞" or next_pos not in {"動詞", "名詞"}:
-                return False
-        elif word == "の":
-            if prev_pos != "名詞" or next_pos != "名詞":
-                return False
-        elif word == "と":
-            if prev_pos != "名詞" or next_pos not in {"名詞", "動詞"}:
-                return False
-        elif word == "で":
-            if prev_pos != "名詞" or next_pos not in {"動詞", "形容詞"}:
-                return False
+    # 孤立感動詞チェック（感動詞が1語だけで存在する場合NG）
+    interjection_count = sum(1 for _, p in tokens if p == "感動詞")
+    if interjection_count == 1 and len(tokens) == 1:
+        return False
 
     return True
 
-def is_valid_negative_prefix_usage(parsed: list[str]) -> bool:
+
+def check_pos_usage(parsed: list[str]) -> bool:
+    """
+    動詞活用、助動詞の使い方、助詞の意味的使い方、否定接頭辞などをチェック
+    """
+    tokens = []
+    prev_pos = None
     NEGATIVE_PREFIX_RULES = {
         "不": {"形状詞", "名詞", "形容動詞"},
-        "未": {"名詞"},  # 実際は「未解決」みたいに動詞の名詞化が多い
+        "未": {"名詞"},
         "無": {"名詞"},
         "非": {"名詞"},
     }
 
-    for i in range(len(parsed) - 1):
-        line1 = parsed[i]
-        line2 = parsed[i + 1]
-
-        if "EOS" in line1 or not line1.strip() or "\t" not in line1:
-            continue
-        if not line2.strip() or "\t" not in line2:
-            continue
-
-        surface1, feature1 = line1.split("\t", 1)
-        surface2, feature2 = line2.split("\t", 1)
-
-        pos1 = feature1.split(",")[0]
-        pos2 = feature2.split(",")[0]
-
-        if surface1 in NEGATIVE_PREFIX_RULES and pos1 == "接頭辞":
-            allowed_pos = NEGATIVE_PREFIX_RULES[surface1]
-            if pos2 not in allowed_pos:
-                return False  # 不自然な語構成
-    return True
-
-def is_valid_pos_set(parsed: list[str]) -> bool:
     for line in parsed:
         if line == "EOS" or not line.strip():
             continue
         cols = line.split("\t")
-        if len(cols) < 5:
+        if len(cols) < 7:
             continue
-        pos = cols[4].split("-")[0]
-        if pos in {"副詞", "感動詞"}:
+        surface = cols[0]
+        pos_detail = cols[4]
+        pos = pos_detail.split("-")[0]
+        conj_form = cols[6]
+        tokens.append((surface, pos, pos_detail, conj_form))
+
+    # 動詞の活用形チェック（未然形、仮定形はNG）
+    for _, pos, pos_detail, conj_form in tokens:
+        if pos == "動詞" and (conj_form.startswith("未然形") or conj_form.startswith("仮定形")):
             return False
+
+    # 助動詞の前が動詞であること
+    for i, (_, pos, _, _) in enumerate(tokens):
+        if pos == "助動詞":
+            if i == 0 or tokens[i - 1][1] != "動詞":
+                return False
+
+    # 助詞の意味的使い方チェック
+    for i, (surface, pos, _, _) in enumerate(tokens):
+        if pos != "助詞":
+            continue
+        if i == 0 or i == len(tokens) - 1:
+            return False  # 文頭文末の助詞はNG
+        prev_pos = tokens[i - 1][1]
+        next_pos = tokens[i + 1][1]
+
+        if surface == "が":
+            if prev_pos != "名詞" or next_pos not in {"動詞", "形容詞", "名詞"}:
+                return False
+        elif surface == "を":
+            if prev_pos != "名詞" or next_pos != "動詞":
+                return False
+        elif surface == "に":
+            if prev_pos != "名詞" or next_pos not in {"動詞", "名詞"}:
+                return False
+        elif surface == "の":
+            if prev_pos != "名詞" or next_pos != "名詞":
+                return False
+        elif surface == "と":
+            if prev_pos != "名詞" or next_pos not in {"名詞", "動詞"}:
+                return False
+        elif surface == "で":
+            if prev_pos != "名詞" or next_pos not in {"動詞", "形容詞"}:
+                return False
+        else:
+            return False  # 未知の助詞はNG
+
+    # 否定接頭辞の使い方チェック
+    for i in range(len(tokens) - 1):
+        surface1, pos1, pos_detail1, _ = tokens[i]
+        surface2, pos2, _, _ = tokens[i + 1]
+
+        if surface1 in NEGATIVE_PREFIX_RULES and pos_detail1.startswith("接頭辞"):
+            allowed_pos = NEGATIVE_PREFIX_RULES[surface1]
+            if pos2 not in allowed_pos:
+                return False
+            
+    # 接尾辞チェック
+    if tokens and tokens[0][2].startswith("接尾辞"):
+        return False
+    for i in range(len(tokens) - 1):
+        _, _, pos_detail, _ = tokens[i]
+        _, _, next_pos_detail, _ = tokens[i + 1]
+        if pos_detail.startswith("接尾辞") and next_pos_detail.startswith("接尾辞"):
+            return False
+
+    # 接頭辞が文末に来るのはNG
+    if tokens and tokens[-1][2].startswith("接頭辞"):
+        return False
+
     return True
 
+
+def validate_parsed_sentence(parsed: list[str]) -> bool:
+    if contains_interjection_or_adverb(parsed):
+        return False
+    if not check_positions(parsed):
+        return False
+    if not check_pos_usage(parsed):
+        return False
+    return True
 
 def is_in_counts(word: str, n: int) -> str | None:
     parsed_wakati = tagger_wakati.parse(word).strip().split()
@@ -204,14 +223,7 @@ def is_in_counts(word: str, n: int) -> str | None:
 
     if (
         len(parsed_wakati) <= n
-        and pos != "助詞"
-        and is_valid_particle_position(parsed)
-        and is_valid_particle_semantics(parsed)
-        and is_valid_negative_prefix_usage(parsed)
-        and is_valid_inflection(parsed)
-        # band is_valid_adverb_placement(parsed)
-        and is_valid_pos_set(parsed)
-        and is_no_lone_interjection(parsed)
+        and validate_parsed_sentence(parsed)
     ):
         return word
     else:
@@ -256,7 +268,7 @@ def most_natural_string(candidates):
     return max(valid, key=get_bert_score)
 
 def random_hira(n: int) -> list[str]:
-    gojuon = "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん"
+    gojuon = "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわ"
     return [random.choice(gojuon) for _ in range(n)]
 
 if __name__ == "__main__":
@@ -264,7 +276,8 @@ if __name__ == "__main__":
     # words = ["光", "対立", "こう", "サヤ", "エト", "ルナ", "しらべ", "イリス"]
     # words = ["花海咲季", "月村手毬", "藤田ことね", "有村麻央", "姫崎莉波", "十王星南", "雨夜燕"]
 
-    words = random_hira(7)
+    
+    words = random_hira(9)
     print("入力単語(ひらがな):", words)
 
     hiras = get_first_hiragana_of_words(words)
@@ -273,7 +286,7 @@ if __name__ == "__main__":
     pattern = generate_permutations(hiras)
     print("全組み合わせ数:", len(pattern))
 
-    for n in range(3, 5):
+    for n in range(2, 5):
         valid = check_counts(pattern, n)
         print(f"単語数 <= {n} の候補数:", len(valid))
         if valid:
@@ -281,3 +294,5 @@ if __name__ == "__main__":
             print(f"最も自然な文字列: {result}")
             print(tagger.parse(result))
             break
+
+    # print(tagger.parse("たべられます")) # チェック用
