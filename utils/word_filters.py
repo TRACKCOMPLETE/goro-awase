@@ -2,7 +2,7 @@
 
 import MeCab
 
-tagger = MeCab.Tagger("-Ochasen")
+tagger = MeCab.Tagger()
 
 def contains_symbol_by_pos(text: str) -> bool:
     node = tagger.parseToNode(text)
@@ -22,7 +22,7 @@ def contains_no_noun(text: str) -> bool:
         node = node.next
     return False
 
-def is_all_nouns(parsed: list[str]) -> bool:
+def is_not_all_nouns(parsed: list[str]) -> bool:
     for line in parsed:
         if line == "EOS" or not line.strip():
             continue
@@ -34,9 +34,15 @@ def is_all_nouns(parsed: list[str]) -> bool:
             return True
     return False
 
-def should_exclude(words: list[str]) -> list[bool]:
+
+def should_pass(words: list[str]) -> list[str]:
     results = []
     for word in words:
-        exclude = contains_symbol_by_pos(word) or contains_no_noun(word) or is_all_nouns(word)
-        results.append(exclude)
+        cond1 = contains_symbol_by_pos(word)
+        cond2 = contains_no_noun(word)
+        parsed = tagger.parse(word).split("\n")
+        cond3 = is_not_all_nouns(parsed)
+
+        if cond1 and cond2 and cond3:
+            results.append(word)
     return results
