@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-# pip install jaconv mecab-python3 unidic-lite
-# pip install transformers fugashi ipadic torch
 from utils.hiragana_utils import get_first_hiragana_of_words, random_hira, generate_permutations
 from utils.bert_scorer import most_natural_string
 from utils.pos_validator import check_counts
