@@ -10,7 +10,6 @@ This software uses the following third-party libraries:
 - [mecab-python3](https://pypi.org/project/mecab-python3/) - BSD License
 - [unidic-lite](https://pypi.org/project/unidic-lite/) - BSD License
 - [fugashi](https://pypi.org/project/fugashi/) - MIT License
-- [ipadic](https://pypi.org/project/ipadic/) - BSD License
 - [transformers](https://pypi.org/project/transformers/) - Apache License 2.0
 - [torch (PyTorch)](https://pypi.org/project/torch/) - BSD License
 
